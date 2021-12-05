@@ -1,0 +1,153 @@
+---
+title: "과제 8차_이건핫조(김선웅, 최예은, 윤준식)"
+author: "이건핫조(김선웅, 최예은, 윤준식)"
+date: "2021 12 04"
+output:
+ rmdformats::readthedown:
+  highlight: kate
+  toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(rgdal)
+library(tmap)
+library(sf)
+library(sp)
+library(tmaptools)
+library(ggmap)
+library(stringr)
+library(readr)
+library(OpenStreetMap) 
+library(raster)
+library(leafem)
+library(DT)
+library
+```
+# 목표1. 지하철역 매핑
+서울교통공사가 운영하는 지하철 역(경기도 일부 포함)을 서울시 지도 위에 매핑하기
+
+## data wrangle
+### shp 파일 불러오기
+```{r}
+sigungu <- readOGR(dsn = "./data/shp/구",    
+                   layer = "kr_si_gun-gu",
+                   encoding = "UTF-8",
+                   stringsAsFactors = FALSE, 
+                   verbose = FALSE) 
+
+# 속성 테이블 확인
+as_tibble(sigungu@data)
+sigung.as.df <- sigungu@data
+
+# 시각화
+sp::plot(sigungu)
+```
+
+### 데이터 불러오기 
+```{r}
+#2021년 12월 4일 기준 서울교통공사가 운영하는 지하철역(경기도 포함) 주소 데이터
+subway <- read.csv("./data/SeoulMetro_station_add.csv") %>%
+  dplyr::select(c(1,2,4)) %>%
+  rename(line = 호선, station = 역명, address = 도로명주소)
+as_tibble(subway)
+```
+
+```{r message=FALSE, warning=FALSE}
+# generate coordinate with geocode
+ 
+register_google(key='AIzaSyCQnWe8Pzy7Erl9t6Qcq5kqgri9tgrrrt4')
+coordinate = subway$address %>% enc2utf8() %>% geocode()
+ 
+## merging
+ 
+subway.lon.lat = bind_cols(subway, coordinate)
+DT::datatable(subway.lon.lat)
+```
+
+## 공간자료 다루기
+### shp 파일 좌표계 정의 및 전환
+```{r}
+seoulemd <- readOGR(dsn = "./data/shp/행정동", 
+                    layer = "Z_SOP_BND_ADM_DONG_PG", 
+                    encoding = "UTF-8",
+                    stringsAsFactors = FALSE,
+                    verbose = FALSE)[c(1:424),]
+
+# 좌표계 정의
+seoulemd@proj4string <- raster::crs("+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=500000 +ellps=GRS80 +towgs84=0.0,0.0,0.0,0.0,0.0,0.0,0.0 +units=m +no_defs")
+
+crs(seoulemd)
+crs(sigungu)
+```
+
+### 위도 경도 좌표로 공간자료 생성
+```{r}
+# gcs 시스템 사용
+crsgcs <- crs("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs") 
+
+SeoulMetro <- SpatialPointsDataFrame(subway.lon.lat[, 4:5], 
+                                  subway.lon.lat,
+                                  proj4string = crsgcs) %>% 
+           spTransform(crs(sigungu))   
+```
+
+## 매핑
+```{r tmap view 1}
+tmap_mode("view")       
+{
+tm1 <- tm_shape(SeoulMetro) + tm_dots(col= "grey", id="station") + tm_shape(seoulemd) + tm_polygons(border.col="black", alpha = 0)
+lf <- tmap_leaflet(tm1)              
+addMouseCoordinates(lf)              
+}
+
+```
+# 목표 2. 전체 역 매핑
+
+## data wrangle
+### 데이터 가져오기
+```{r paged.print=TRUE}
+# 데이터 출처: https://www.data.go.kr/data/15013205/standard.do 
+Metro <- read.csv("./data/전국도시철도역사정보표준데이터.csv") %>%
+  dplyr::select(c(2,4,7,10,11,13,17))
+  
+colnames(Metro) <- c("station", "line", "transfer", "lat", "lot", "address", "operator")
+Metro <- Metro %>% filter(str_detect(.$address, "서울특별시")) 
+Metro[ , 8:10]<-  str_split_fixed(Metro$address, " ", 3)
+Metro %>% rename(gu = V9)
+Metro$address <- gsub('()', '', Metro$address)
+as_tibble(Metro)
+```
+
+### 위도 경도 좌표로 공간자료 생성
+```{r}
+MetroinSeoul <- SpatialPointsDataFrame(Metro[, 5:4], 
+                                  Metro,
+                                  proj4string = crsgcs) %>% 
+           spTransform(crs(seoulemd))   
+
+```
+
+## 매핑
+```{r tmap view 2}
+tmap_mode("view")  
+
+{
+tm2 <- tm_shape(MetroinSeoul) + tm_dots(col= "line", id="station") + tm_shape(seoulemd) + tm_polygons(border.col="black", alpha = 0)
+lf2 <- tmap_leaflet(tm2)              
+addMouseCoordinates(lf2)              
+}
+```
+
+
+```{r tmap view 4}
+tmap_mode("view")
+
+tm_shape(seoulemd) + tm_polygons(border.col="grey", alpha = 0) + tm_shape(MetroinSeoul) + tm_dots(id="station", c("line", "operator"), auto.palette.mapping=FALSE) + tm_facets(sync = TRUE, ncol = 2)
+
+```
+
+
+
+
+
